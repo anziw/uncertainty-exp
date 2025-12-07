@@ -1,0 +1,38 @@
+---
+title: "sanity-check"
+output: html_document
+date: "2025-12-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r check image file}
+df_image <- read.csv("processed_data_image.csv")
+
+# all these statements should return TRUE
+paste0("# participants: ", length(unique(df_image$random_id)))
+length(unique(df_image$trial_id)) == 36
+length(unique(df_image$outcome)) == 9
+length(unique(df_image$utterance)) == 3
+min(df_image$value) == 0
+max(df_image$value) == 100
+min(df_image$prob) == 0.0
+max(df_image$prob) == 1.0
+```
+
+```{r check text file}
+df_text <- read.csv("processed_data_text.csv")
+
+# all these statements should return TRUE
+paste0("# participants: ", length(unique(df_text$random_id)))
+length(unique(df_text$trial_id)) == 36
+length(unique(df_text$outcome)) == 9
+length(unique(df_text$utterance)) == 3
+min(df_text$value) == 0
+max(df_text$value) == 100
+min(df_text$prob) == 0.0
+max(df_text$prob) == 1.0
+```
