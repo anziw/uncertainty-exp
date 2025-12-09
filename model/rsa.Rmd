@@ -1,0 +1,686 @@
+---
+title: "rsa"
+output: html_document
+date: "2025-07-09"
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+```
+
+
+```{r def params}
+threshold_might = 0.1
+threshold_probably = 0.6
+threshold_not = 0.2
+#threshold_not = ?
+
+cost_might = 3.03
+cost_probably = 3.03
+cost_not = 3.03
+
+n_participants = 1000
+decay = 5
+noise_strength = 0.074
+rat_alpha = 2.211
+
+# S&D's params
+# alpha_not = 0.407
+# beta_not = 1.219
+# alpha_might = 0.928
+# beta_might = 3.086
+# alpha_probably = 2.552
+# beta_probably = 1.771
+
+alpha_not = 0.3
+beta_not = 2.5
+alpha_might = 0.7
+beta_might = 1.5
+alpha_probably = 2.7
+beta_probably = 2.0
+
+thresholds_not <- rbeta(n_participants, alpha_not, beta_not)
+thresholds_might <- rbeta(n_participants, alpha_might, beta_might)
+thresholds_probably <- rbeta(n_participants, alpha_probably, beta_probably)
+```
+
+
+```{r def functions}
+# L0: decides whether an event probability is above or equal to the threshold of a certain uncertainty expression
+l0 <- function(eventprob, threshold, negative = 0) {
+  return(ifelse(negative == 0, 
+                ifelse(eventprob > threshold, 1, 0),
+                ifelse(eventprob < threshold, 1, 0)))
+}
+
+# S1: decides utility of choosing a certain expression to communicate the event. the probability is of choosing that expression is proportional to the utility
+s1 <- function(l0_vals, cost, rationality) {
+  log_vals <- log(l0_vals)
+  return(exp(rationality * (log_vals - cost)))
+}
+
+add_noise <- function(s1_matrix, noise) {
+  return(s1_matrix * (1-noise) + 1/3 * noise)
+}
+
+# ES1: adds in smoothedness from different thresholds of different participants
+es1 <- function(eventprob, thresholds, negative, cost, rationality, n_samples = n_participants) {
+  s1_vals <- sapply(thresholds, function(thres) {
+    s1(eventprob, thres, negative, cost, rationality)
+  })
+  return(mean(s1_vals))
+}
+
+normalize_rows <- function(mat) {
+  row_sums <- rowSums(mat)
+  mat_normalized <- mat
+  for (i in seq_len(nrow(mat))) {
+    if (row_sums[i] == 0) {
+      mat_normalized[i, ] <- rep(0, ncol(mat))
+    } else {
+      mat_normalized[i, ] <- mat[i, ] / row_sums[i]
+    }
+  }
+  return(mat_normalized)
+}
+
+normalize_columns <- function(mat) {
+  col_sums <- colSums(mat)
+  mat_normalized <- mat
+  for (j in seq_len(ncol(mat))) {
+    if (col_sums[j] == 0) {
+      mat_normalized[, j] <- rep(0, nrow(mat))
+    } else {
+      mat_normalized[, j] <- mat[, j] / col_sums[j]
+    }
+  }
+  return(mat_normalized)
+}
+
+# assign values to l0 at probabilities where no expression is immediately plausible, assuming this only happens between thresholds of not and might
+handle_empty_probs <- function(mat, tn, tm) {
+  col_sums <- colSums(mat)
+  mat_processed <- mat
+  for (j in seq_len(ncol(mat))) {
+    if (col_sums[j] == 0) {
+      event_prob = j * 0.1
+      dn = abs(event_prob - tn)
+      dm = abs(event_prob - tm)
+      vn = dm/(dn+dm)
+      vm = dn/(dn+dm)
+      mat_processed[, j] <- c(0, vm, vn)
+    }
+  }
+  return(mat_processed)
+}
+
+# create a 9*9 matrix representing perception uncertainty 
+# k: decay constant
+# confusability: degree of perception uncertainty a particular participant holds (range: [0, 1])
+create_p_matrix <- function(k, confusability) {
+  m <- diag(9)
+  x = confusability
+  y = k ^ (-x)
+  for (i in 1:9) {
+    if (i == 1) {
+      m[i, i+1] = y
+    } else if (i == 9) {
+      m[i, i-1] = y
+    } else {
+      m[i, i+1] = y
+      m[i, i-1] = y
+    }
+  }
+  return(m)
+}
+
+# create a 9*9 matrix representing interpretation uncertainty 
+# k: decay constant
+# confusability: degree of interpretation uncertainty a particular participant holds (range: [0, 1])
+create_i_matrix <- function(k, confusability) {
+  m <- diag(9)
+  x = confusability
+  y = k ^ (-x)
+  for (i in 1:9) {
+    if (1 < i && i < 5) {
+      for (j in 1:(i-1)) {
+        m[i, j] = y
+      }
+    }
+    else if (5 < i && i < 9) {
+      for (j in (i+1):9) {
+        m[i, j] = y
+      }
+    }
+  }
+  return(m)
+}
+```
+
+
+```{r tn < tm < tp}
+participants <- data.frame(id = 1:n_participants, tn = NA, tm = NA, tp = NA)
+
+for (i in 1:nrow(participants)) {
+  curr_p <- participants[i, ]
+  
+  # tn <= tm
+  thres_not <- rbeta(1, alpha_not, beta_not)
+  thres_might <- rbeta(1, alpha_might, beta_might)
+  # while (thres_might < thres_not){
+  #   thres_might <- rbeta(1, alpha_might, beta_might)
+  # }
+  # 
+  # tm <= tp
+  thres_prob <- rbeta(1, alpha_probably, beta_probably)
+  # while (thres_prob < thres_might) {
+  #   thres_prob <- rbeta(1, alpha_probably, beta_probably)
+  # }
+  
+  curr_p$tn = thres_not
+  curr_p$tm = thres_might
+  curr_p$tp = thres_prob
+  participants[i, ] <- curr_p
+}
+
+```
+
+
+```{r no transformation}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+df_none <- data.frame(
+  participant = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:nrow(participants)) {
+  curr_p <- participants[i, ]
+  thres_not <- curr_p$tn
+  thres_might <- curr_p$tm
+  thres_prob <- curr_p$tp
+  
+  l0_matrix <- matrix(0, nrow = 3, ncol = 9)
+  eventprobs <- seq(0.1, 0.9, length.out = 9)
+  
+  l0_probably <- sapply(eventprobs, function(x) {
+    l0(x, thres_prob, negative = 0)
+  })
+  l0_might <- sapply(eventprobs, function(x) {
+    l0(x, thres_might, negative = 0)
+  })
+  l0_not <- sapply(eventprobs, function(x) {
+    l0(x, thres_not, negative = 1)
+  })
+  
+  l0_matrix[1, ] <- l0_probably
+  l0_matrix[2, ] <- l0_might
+  l0_matrix[3, ] <- l0_not
+  
+  l0_matrix <- handle_empty_probs(l0_matrix, thres_not, thres_might)
+  l0_matrix <- normalize_rows(l0_matrix)
+
+  s1_probably <- sapply(l0_matrix[1, ], function(x) {
+    s1(x, cost_probably, rationality = 2.21)
+  })
+  s1_might <- sapply(l0_matrix[2, ], function(x) {
+    s1(x, cost_might, rationality = 2.21)
+  })
+  s1_not <- sapply(l0_matrix[3, ], function(x) {
+    s1(x, cost_not, rationality = 2.21)
+  })
+  
+  s1_matrix <- matrix(0, nrow = 3, ncol = 9)
+  s1_matrix[1, ] <- s1_probably
+  s1_matrix[2, ] <- s1_might
+  s1_matrix[3, ] <- s1_not
+  
+  s1_matrix <- normalize_columns(s1_matrix)
+  s1_matrix <- add_noise(s1_matrix, noise_strength)
+  prod_matrix <- t(s1_matrix)
+  
+  
+  curr_df <- expand.grid(
+    participant = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prod_matrix)
+  df_none <- rbind(df_none, curr_df)
+}
+
+```
+
+
+```{r predict gumball image}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+df_gumball <- data.frame(
+  participant = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:nrow(participants)) {
+  curr_p <- participants[i, ]
+  thres_not <- curr_p$tn
+  thres_might <- curr_p$tm
+  thres_prob <- curr_p$tp
+  
+  l0_matrix <- matrix(0, nrow = 3, ncol = 9)
+  eventprobs <- seq(0.1, 0.9, length.out = 9)
+  
+  l0_probably <- sapply(eventprobs, function(x) {
+    l0(x, thres_prob, negative = 0)
+  })
+  l0_might <- sapply(eventprobs, function(x) {
+    l0(x, thres_might, negative = 0)
+  })
+  l0_not <- sapply(eventprobs, function(x) {
+    l0(x, thres_not, negative = 1)
+  })
+  
+  l0_matrix[1, ] <- l0_probably
+  l0_matrix[2, ] <- l0_might
+  l0_matrix[3, ] <- l0_not
+  
+  l0_matrix <- handle_empty_probs(l0_matrix, thres_not, thres_might)
+  l0_matrix <- normalize_rows(l0_matrix)
+
+  s1_probably <- sapply(l0_matrix[1, ], function(x) {
+    s1(x, cost_probably, rationality = 2.21)
+  })
+  s1_might <- sapply(l0_matrix[2, ], function(x) {
+    s1(x, cost_might, rationality = 2.21)
+  })
+  s1_not <- sapply(l0_matrix[3, ], function(x) {
+    s1(x, cost_not, rationality = 2.21)
+  })
+  
+  s1_matrix <- matrix(0, nrow = 3, ncol = 9)
+  s1_matrix[1, ] <- s1_probably
+  s1_matrix[2, ] <- s1_might
+  s1_matrix[3, ] <- s1_not
+  
+  s1_matrix <- normalize_columns(s1_matrix)
+  s1_matrix <- add_noise(s1_matrix, noise_strength)
+  
+  # confusability that decides the degree of perception/interpretation uncertainty
+  conf = rnorm(1)
+  per_matrix <- create_p_matrix(decay, conf)
+  per_matrix <- normalize_rows(per_matrix)
+  prod_matrix <- per_matrix %*% (t(s1_matrix))
+  
+  
+  curr_df <- expand.grid(
+    participant = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prod_matrix)
+  df_gumball <- rbind(df_gumball, curr_df)
+}
+
+```
+
+
+```{r predict election image}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+df_election <- data.frame(
+  participant = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:nrow(participants)) {
+  curr_p <- participants[i, ]
+  thres_not <- curr_p$tn
+  thres_might <- curr_p$tm
+  thres_prob <- curr_p$tp
+  
+  l0_matrix <- matrix(0, nrow = 3, ncol = 9)
+  eventprobs <- seq(0.1, 0.9, length.out = 9)
+  
+  l0_probably <- sapply(eventprobs, function(x) {
+    l0(x, thres_prob, negative = 0)
+  })
+  l0_might <- sapply(eventprobs, function(x) {
+    l0(x, thres_might, negative = 0)
+  })
+  l0_not <- sapply(eventprobs, function(x) {
+    l0(x, thres_not, negative = 1)
+  })
+  
+  l0_matrix[1, ] <- l0_probably
+  l0_matrix[2, ] <- l0_might
+  l0_matrix[3, ] <- l0_not
+  
+  l0_matrix <- handle_empty_probs(l0_matrix, thres_not, thres_might)
+  l0_matrix <- normalize_rows(l0_matrix)
+
+  s1_probably <- sapply(l0_matrix[1, ], function(x) {
+    s1(x, cost_probably, rationality = 2.21)
+  })
+  s1_might <- sapply(l0_matrix[2, ], function(x) {
+    s1(x, cost_might, rationality = 2.21)
+  })
+  s1_not <- sapply(l0_matrix[3, ], function(x) {
+    s1(x, cost_not, rationality = 2.21)
+  })
+  
+  s1_matrix <- matrix(0, nrow = 3, ncol = 9)
+  s1_matrix[1, ] <- s1_probably
+  s1_matrix[2, ] <- s1_might
+  s1_matrix[3, ] <- s1_not
+  
+  s1_matrix <- normalize_columns(s1_matrix)
+  s1_matrix <- add_noise(s1_matrix, noise_strength)
+  
+  # confusability that decides the degree of perception/interpretation uncertainty
+  conf = rnorm(1)
+  int_matrix <- create_i_matrix(decay, conf)
+  int_matrix <- normalize_rows(int_matrix)
+  prod_matrix <- int_matrix %*% (t(s1_matrix))
+  
+  
+  curr_df <- expand.grid(
+    participant = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prod_matrix)
+  df_election <- rbind(df_election, curr_df)
+}
+
+```
+
+
+```{r summarize prediction}
+df_none <- df_none %>%
+  group_by(event_prob, utterance) %>%
+  summarize(avg_across_participants = mean(usage),
+            sd = sd(usage),
+            se = sd(usage)/sqrt(n()))
+
+df_none$condition = "none"
+
+df_gumball <- df_gumball %>%
+  group_by(event_prob, utterance) %>%
+  summarize(avg_across_participants = mean(usage),
+            sd = sd(usage),
+            se = sd(usage)/sqrt(n()))
+
+df_gumball$condition = "gumball"
+
+df_election <- df_election %>%
+  group_by(event_prob, utterance) %>%
+  summarize(avg_across_participants = mean(usage),
+            sd = sd(usage),
+            se = sd(usage)/sqrt(n()))
+
+df_election$condition = "unknown election"
+
+df <- rbind(df_none, df_gumball, df_election)
+
+plot <- ggplot(df, aes(x = event_prob, y = avg_across_participants, color = utterance)) + 
+  geom_line() + 
+  geom_point() + 
+  geom_errorbar(aes(ymin=avg_across_participants - 2*se,
+                    ymax=avg_across_participants + 2*se),
+                    width = 2) +
+  labs(x = "event probability", 
+       y = "probability of using utterance") + 
+  scale_x_continuous(breaks = seq(10, 90, by = 10)) +
+  scale_color_manual(values=c("#46b84f", "#E69F00", "#56B4E9")) + 
+  facet_grid(~condition) +
+  ylim(0, 1) +
+  theme_set(theme_bw() +
+            theme(panel.grid.major=element_blank(),
+                  panel.grid.minor=element_blank(),
+                  axis.text.x=element_text(size=rel(1))))
+
+ggsave("image_prediction.png", plot = plot, width = 8, height = 4)
+```
+
+
+```{r evaluate prediction}
+# columns = event probability, rows = expressions
+gumball_summ <- matrix(df_gumball$avg_across_participants, nrow = 3, byrow = FALSE)
+gumball_summ <- gumball_summ[c(2, 1, 3), ] # order: not, might, probably
+
+election_summ <- matrix(df_election$avg_across_participants, nrow = 3, byrow = FALSE)
+election_summ <- election_summ[c(2, 1, 3), ] 
+
+none_summ <- matrix(df_none$avg_across_participants, nrow = 3, byrow = FALSE)
+none_summ <- none_summ[c(2, 1, 3), ] 
+
+gumball_empirical = matrix(c(1, 1, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 1, 1, 1, 1, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 1, 1, 1),
+                           nrow = 3, ncol = 9, byrow = TRUE)
+
+election_empirical = matrix(c(1, 1, 1, 1, 0, 0, 0, 0, 0,
+                              0, 0, 0, 0, 1, 0, 0, 0, 0,
+                              0, 0, 0, 0, 0, 1, 1, 1, 1),
+                            nrow = 3, ncol = 9, byrow = TRUE)
+
+# mark the most likely expression as 1 and the rest 0
+summ_prediction <- function(mat) {
+  apply(mat, 2, function(col) {
+    as.integer(col == max(col))
+  })
+}
+
+# calculate the accuracy of predictions
+calc_accuracy <- function(prediction, empirical) {
+  pred_idx <- apply(prediction, 2, which.max)
+  emp_idx  <- apply(empirical, 2, which.max)
+  
+  mean(pred_idx == emp_idx)
+}
+
+gumball_summ2 <- summ_prediction(gumball_summ)
+none_summ2 <- summ_prediction(none_summ)
+election_summ2 <- summ_prediction(election_summ)
+
+print(calc_accuracy(gumball_summ2, gumball_empirical))
+print(calc_accuracy(none_summ2, gumball_empirical))
+
+print(calc_accuracy(election_summ2, election_empirical))
+print(calc_accuracy(none_summ2, election_empirical))
+
+```
+
+** Simulation 1 (fill the transformation matrix with random values) **
+```{r gumball sim}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+sim_gumball <- data.frame(
+  seed = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  accuracy = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:100) {
+  set.seed(i)
+  transformation <- matrix(runif(81), nrow = 9, ncol = 9)
+  transformation <- normalize_rows(transformation)
+  prediction <- transformation %*% (t(none_summ))
+  acc <- calc_accuracy(t(prediction), gumball_empirical)
+  
+  curr_df <- expand.grid(
+    seed = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    accuracy = acc,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prediction)
+  sim_gumball <- rbind(sim_gumball, curr_df)
+}
+
+sim_gumball_summ <- sim_gumball %>%
+  arrange(desc(accuracy)) %>%
+  distinct(seed, .keep_all = TRUE) %>% 
+  slice_head(n = 5) %>%
+  select(accuracy, seed)
+
+print(sim_gumball_summ)
+```
+
+
+```{r election sim}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+sim_election <- data.frame(
+  seed = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  accuracy = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:100) {
+  set.seed(i)
+  transformation <- matrix(runif(81), nrow = 9, ncol = 9)
+  transformation <- normalize_rows(transformation)
+  prediction <- transformation %*% (t(none_summ))
+  acc <- calc_accuracy(t(prediction), election_empirical)
+  
+  curr_df <- expand.grid(
+    seed = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    accuracy = acc,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prediction)
+  sim_election <- rbind(sim_election, curr_df)
+}
+
+sim_election_summ <- sim_election %>%
+  arrange(desc(accuracy)) %>%
+  distinct(seed, .keep_all = TRUE) %>% 
+  slice_head(n = 5) %>%
+  select(accuracy, seed)
+
+print(sim_election_summ)
+```
+
+** Simulation 2 (randomly shuffle non-zero values in perception/interpretation matrices) **
+```{r gumball sim 2}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+sim_gumball2 <- data.frame(
+  seed = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  accuracy = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:100) {
+  set.seed(i)
+  
+  conf = rnorm(1)
+  per_matrix <- create_p_matrix(decay, conf)
+  per_vector <- as.vector(per_matrix)
+  shuffled_vector <- sample(per_vector)
+  per_matrix <- matrix(shuffled_vector, nrow = 9, ncol = 9)
+  per_matrix <- normalize_rows(per_matrix)
+  
+  transformation <- per_matrix
+  prediction <- transformation %*% (t(none_summ))
+  acc <- calc_accuracy(t(prediction), gumball_empirical)
+  
+  curr_df <- expand.grid(
+    seed = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    accuracy = acc,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prediction)
+  sim_gumball2 <- rbind(sim_gumball2, curr_df)
+}
+
+sim_gumball2_summ <- sim_gumball2 %>%
+  arrange(desc(accuracy)) %>%
+  distinct(seed, .keep_all = TRUE) %>% 
+  slice_head(n = 5) %>%
+  select(accuracy, seed)
+
+print(sim_gumball2_summ)
+
+```
+```{r election sim 2}
+eventprob_values <- seq(10, 90, by = 10)
+utterances <- c("probably", "might", "not")
+
+sim_election2 <- data.frame(
+  seed = numeric(),
+  event_prob = character(),
+  utterance = character(),
+  usage = numeric(),
+  accuracy = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:100) {
+  set.seed(i)
+  
+  conf = rnorm(1)
+  per_matrix <- create_p_matrix(decay, conf)
+  per_vector <- as.vector(per_matrix)
+  shuffled_vector <- sample(per_vector)
+  per_matrix <- matrix(shuffled_vector, nrow = 9, ncol = 9)
+  per_matrix <- normalize_rows(per_matrix)
+  
+  transformation <- per_matrix
+  prediction <- transformation %*% (t(none_summ))
+  acc <- calc_accuracy(t(prediction), election_empirical)
+  
+  curr_df <- expand.grid(
+    seed = i,
+    event_prob = eventprob_values,
+    utterance = utterances,
+    accuracy = acc,
+    stringsAsFactors = FALSE
+  )
+  curr_df$usage <- as.vector(prediction)
+  sim_election2 <- rbind(sim_election2, curr_df)
+}
+
+sim_election2_summ <- sim_election2 %>%
+  arrange(desc(accuracy)) %>%
+  distinct(seed, .keep_all = TRUE) %>% 
+  slice_head(n = 5) %>%
+  select(accuracy, seed)
+
+print(sim_election2_summ)
+
+```
