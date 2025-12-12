@@ -1,0 +1,445 @@
+---
+title: "HSP 2026 statistical analyses"
+output: pdf_document
+date: "2025-12-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lme4)
+library(tidyverse)
+library(brms)
+```
+
+
+```{r load data}
+df_image <- read.csv("processed_data_image.csv") %>%
+  mutate(experiment_type = "image",
+         partid = paste0('image',random_id))
+
+
+
+df_text <- read.csv("processed_data_text.csv")%>%
+  mutate(experiment_type = "text",
+         partid = paste0('text',random_id))
+
+
+df <- bind_rows(df_image, df_text) %>%
+  mutate(experiment_type = factor(experiment_type, levels = c('text', 'image')),
+         event_type = factor(event_type))
+print(length(unique(df$partid)))
+
+
+
+
+
+```
+### Basic sanity checks
+```{r sanity check}
+
+print(nrow(df_image))
+print(nrow(df_text))
+
+print(length(unique(df_image$partid)))
+print(length(unique(df_text$partid)))
+
+print(unique(df_image$color))
+print(nrow(subset(df_image, color == 'purple')))
+print(nrow(subset(df_image, color == 'orange')))
+
+print(unique(df_text$color))
+print(nrow(subset(df_text, color == 'purple')))
+print(nrow(subset(df_text, color == 'orange')))
+
+
+print(contrasts(df$experiment_type))
+print(contrasts(df$event_type))
+```
+
+```{r}
+
+summ <- df %>%
+  group_by(experiment_type, partid,outcome, event_type, utterance) %>%
+  summarize(n = n()) 
+
+summ2 <- summ %>%
+  filter(partid %in% c('image1', 'text1'))
+
+summ %>%
+  group_by(experiment_type, event_type) %>%
+  summarize(n = unique(n))
+
+
+dat <- read.pcibex("results_full_image.csv") %>%
+  filter(Parameter == "prolific_id")
+
+x <- subset(df_image, partid == 'image1')
+
+# df %>%
+#       filter(Parameter == "prolific_id") %>%
+#       pull(Value)
+
+```
+
+
+### Overiew of results from descriptive plots
+
+People less likely to use might, and more likely to use more informative utterances for election compared to gumball. 
+
+In 10-40%
+* People are more willing to use bare not for election compared to gumball. 
+* People are more willing to use might for gumball compared to election
+
+In 60-90%
+* People are more willing to use probably for election compared to gumball
+* People are more willing to use might for gumball compared to election
+
+What do we want to demonstrate with statistics: 
+
+1. The same qualitative patterns hold for text experiment (significant interaction between outcome and event_type for text experiment, same direction as before for coefficients)
+2. The effects sizes are smaller in the text experiment (significant three-way interaction between outcome, event_type, and experiment type). 
+3. The three-way interaction is because of a difference between image and text in gumball is significant in gumball but not election case?)
+
+Maybe we don't really care as much about the 
+
+## Might analyses
+
+```{r}
+
+might_dat <- df %>%
+  filter(outcome != 50,
+         utterance == 'might') %>%
+  mutate(outcome_binary = ifelse(outcome <=40, '10-40', '60-90'),
+         outcome_binary = factor(outcome_binary))
+
+print(contrasts(might_dat$experiment_type))
+print(contrasts(might_dat$event_type))
+print(contrasts(might_dat$outcome_binary))
+
+might <-  glmer(prob ~ outcome_binary*experiment_type*event_type +
+                           (1 + outcome_binary + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = might_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might)
+
+```
+
+```{r}
+
+might_firsthalf <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(might_dat, outcome_binary == '10-40'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might_firsthalf)
+
+
+```
+
+```{r}
+
+might_secondhalf <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(might_dat, outcome_binary == '60-90'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might_secondhalf)
+
+
+```
+
+```{r}
+
+might_agg <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = might_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might_agg)
+
+
+```
+```{r}
+
+not_firsthalf <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(not_dat, outcome_binary == '10-40'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(not_firsthalf)
+
+
+```
+
+```{r}
+
+might_gumball <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(might_dat, event_type == 'gumball'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(might_gumball)
+
+```
+
+
+```{r}
+
+might_election <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(might_dat, event_type == 'election'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(might_election)
+
+```
+## Not analyses
+
+```{r}
+
+not_dat <- df %>%
+  filter(outcome != 50,
+         utterance == 'bare not') %>%
+  mutate(outcome_binary = ifelse(outcome <=40, '10-40', '60-90'),
+         outcome_binary = factor(outcome_binary, levels = c('10-40','60-90')))
+
+print(contrasts(not_dat$experiment_type))
+print(contrasts(not_dat$event_type))
+print(contrasts(not_dat$outcome_binary))
+
+not <-  glmer(prob ~ outcome_binary*experiment_type*event_type +
+                           (1 + outcome_binary + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = not_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(not)
+
+```
+
+
+
+```{r}
+
+not_gumball <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(not_dat, event_type == 'gumball'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(not_gumball)
+
+```
+
+
+```{r}
+
+not_election <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(not_dat, event_type == 'election'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(not_election)
+
+```
+
+```{r}
+
+not_firsthalf =  glmer(prob ~ event_type*experiment_type +
+                           (1 | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(not_dat, outcome_binary == '10-40'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+
+summary(not_firsthalf)
+
+```
+
+```{r}
+
+not_agg =  glmer(prob ~ event_type*experiment_type +
+                           (1 | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = not_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+
+summary(not_agg)
+
+```
+
+
+## Probably analyses
+
+```{r}
+
+probably_dat <- df %>%
+  filter(outcome != 50,
+         utterance == 'probably') %>%
+  mutate(outcome_binary = ifelse(outcome <=40, '10-40', '60-90'),
+         outcome_binary = factor(outcome_binary, levels = c('60-90', '10-40')))
+
+print(contrasts(probably_dat$experiment_type))
+print(contrasts(probably_dat$event_type))
+print(contrasts(probably_dat$outcome_binary))
+
+probably <-  glmer(prob ~ outcome_binary*experiment_type*event_type +
+                           (1 + outcome_binary + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = probably_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(probably)
+
+```
+
+```{r}
+
+probably_secondhalf <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(probably_dat, outcome_binary == '60-90'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(probably_secondhalf)
+
+
+```
+
+
+```{r}
+
+probably_gumball <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(probably_dat, event_type == 'gumball'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(probably_gumball)
+
+```
+
+```{r}
+
+probably_election <- glmer(prob ~ outcome_binary*experiment_type +
+                           (1 + outcome_binary  | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = subset(probably_dat, event_type == 'election'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+
+summary(probably_election)
+
+```
+
+
+## Final analyses aggregating over outcome probability
+
+```{r}
+
+might_agg <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = might_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might_agg)
+
+
+```
+
+
+```{r}
+
+not_agg <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = not_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(not_agg)
+
+
+```
+
+```{r}
+
+probably_agg <-  glmer(prob ~ experiment_type*event_type +
+                           (1 + event_type | partid), #not having random effect of color
+                         family = binomial(link='logit'),
+                         data = probably_dat,
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(probably_agg)
+
+
+```
+
+## Plots
+
+```{r}
+
+df_summ <- df %>%
+  mutate(outcome_cat = ifelse(outcome <=40, '10-40%', 
+                              ifelse(outcome >=60, '60-90%', '50%'))) %>%
+  group_by(outcome_cat, event_type, experiment_type, utterance) %>%
+  summarize(mean_prob = mean(prob),
+            se_prob = sd(prob)/sqrt(n()))
+
+ggplot(df_summ, aes(x=experiment_type, y=mean_prob,
+                    group=event_type, fill=event_type)) + 
+  geom_bar(stat = 'identity', position=position_dodge(width = 0.9)) + 
+  facet_grid(outcome_cat~utterance) + 
+  geom_errorbar(aes(ymin=mean_prob - 2*se_prob,
+                          ymax=mean_prob + 2*se_prob),
+                position=position_dodge(width = 0.9),
+                width = 0.2) + 
+  labs(y='Probability of utterance',
+         x='')
+
+```
+```{r}
+
+df_summ <- df %>%
+  mutate(outcome_cat = ifelse(outcome <=40, '10-40%', 
+                              ifelse(outcome >=60, '60-90%', '50%'))) %>%
+  group_by(event_type, experiment_type, utterance) %>%
+  summarize(mean_prob = mean(prob),
+            se_prob = sd(prob)/sqrt(n()))
+
+
+base_size <- 16
+
+
+theme_set(theme_bw(base_size = base_size) +
+            theme(panel.grid.major=element_blank(),
+                  panel.grid.minor=element_blank(),
+                  axis.text.x=element_text(size=rel(1)),
+                  legend.position = 'top'))
+
+ggplot(df_summ, aes(x=experiment_type, y=mean_prob,
+                    group=event_type, fill=event_type)) + 
+  geom_bar(stat = 'identity', position=position_dodge(width = 0.9)) + 
+  facet_grid(~utterance) + 
+  geom_errorbar(aes(ymin=mean_prob - 2*se_prob,
+                          ymax=mean_prob + 2*se_prob),
+                position=position_dodge(width = 0.9),
+                width = 0.2) + 
+  labs(y='Probability of utterance',
+         x='', 
+       fill = '') 
+
+```
