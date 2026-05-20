@@ -1,0 +1,543 @@
+---
+title: "scil plots"
+output: html_document
+date: "2026-03-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages("ggpattern")
+
+library(lme4)
+library(tidyverse)
+library(brms)
+library(ggplot2)
+library(ggpattern)
+
+base_size <- 16
+```
+
+```{r preprocess SD}
+sd_raw1 <- read.csv("SD_prestest_might_prob.csv")
+
+sd1 <- sd_raw1 %>%
+  filter(!percentage_blue %in% c(0, 100)) %>%
+  pivot_longer(
+    cols = c(rating1, rating2, rating_other),
+    names_to = "utterance",
+    values_to = "value"
+  ) %>%
+  mutate(
+    utterance = recode(utterance,
+                       rating1 = "might",
+                       rating2 = "probably",
+                       rating_other = "other"),
+    prob = value,
+    value = value * 100,
+    outcome = ifelse(color == "\"orange\"", 100-percentage_blue, percentage_blue),
+    color = ifelse(color == "\"orange\"", "orange", "purple"),
+    event_type = "gumball-S&D",
+    experiment_type = "image",
+    partid = paste0('SD', workerid)
+  )
+
+sd1 <- sd1 %>%
+  filter(utterance != "other")
+
+sd_raw2 <- read.csv("SD_pretest_not_might.csv")
+
+sd2 <- sd_raw2 %>%
+  filter(!percentage_blue %in% c(0, 100)) %>%
+  pivot_longer(
+    cols = c(rating1, rating2, rating_other),
+    names_to = "utterance",
+    values_to = "value"
+  ) %>%
+  mutate(
+    utterance = recode(utterance,
+                       rating1 = "bare not",
+                       rating2 = "might",
+                       rating_other = "other"),
+    prob = value,
+    value = value * 100,
+    outcome = ifelse(color == "\"orange\"", 100-percentage_blue, percentage_blue),
+    color = ifelse(color == "\"orange\"", "orange", "purple"),
+    event_type = "gumball-S&D",
+    experiment_type = "image",
+    partid = paste0('SD', workerid)
+  )
+
+sd2 <- sd2 %>%
+  filter(utterance == "bare not")
+
+sd <- bind_rows(sd1, sd2)
+
+```
+
+```{r load data}
+df_image <- read.csv("processed_data_image.csv") %>%
+  mutate(experiment_type = "image",
+         partid = paste0('image', random_id))
+
+df_text <- read.csv("processed_data_text.csv")%>%
+  mutate(experiment_type = "text",
+         partid = paste0('text', random_id))
+
+common_cols <- Reduce(intersect, list(names(sd), names(df_image), names(df_text)))
+
+df <- bind_rows(
+  sd[, common_cols],
+  df_image[, common_cols],
+  df_text[, common_cols]
+)
+```
+
+```{r image exp result}
+dat1 <- df %>%
+  filter(experiment_type == "image") %>%
+  group_by(event_type, outcome, utterance) %>%
+  summarize(mean_prob = mean(prob),
+            se_prob = sd(prob)/sqrt(n())) %>%
+  ungroup()
+
+dat1$event_type <- factor(
+  dat1$event_type,
+  levels = c("gumball",
+             "gumball-S&D",
+             "election")
+)
+
+
+theme_set(theme_bw(base_size = base_size) +
+            theme(panel.grid.major=element_blank(),
+                  panel.grid.minor=element_blank(),
+                  axis.text.x=element_text(size=rel(1))))
+
+ggplot(dat1, aes(x = outcome,
+               y = mean_prob,
+               color = event_type,
+               linetype = event_type,
+               group = event_type)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prob - 2*se_prob,
+                    ymax = mean_prob + 2*se_prob),
+                width = 1) +
+  ylim(0, 1) +
+  facet_grid(~ utterance) +
+  scale_color_manual(values = c(
+    "gumball" = "lightblue",
+    "gumball-S&D" = "blue",
+    "election" = "red"
+  )) +
+  scale_linetype_manual(values = c(
+    "gumball" = "solid",
+    "gumball-S&D" = "solid",
+    "election" = "dashed"
+  )) +
+  labs(x = "Observed meaning probability",
+       y = "Probability of utterance",
+       color = "",
+       linetype = "") + 
+  theme(legend.position = 'top')
+
+ggsave("image_experiments.pdf", width = 7, height = 4)
+ggsave("image_experiments.png", width = 7, height = 4)
+
+```
+
+```{r text exp result}
+dat2 <- df %>%
+  filter(experiment_type == "text" | event_type == "gumball-S&D") %>%
+  group_by(event_type, outcome, utterance) %>%
+  summarize(mean_prob = mean(prob),
+            se_prob = sd(prob)/sqrt(n())) %>%
+  ungroup()
+
+dat2$event_type <- factor(
+  dat2$event_type,
+  levels = c("gumball",
+             "gumball-S&D",
+             "election")
+)
+
+
+ggplot(dat2, aes(x = outcome,
+               y = mean_prob,
+               color = event_type,
+               linetype = event_type,
+               group = event_type)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prob - 2*se_prob,
+                    ymax = mean_prob + 2*se_prob),
+                width = 1) +
+  ylim(0, 1) +
+  facet_grid(~ utterance) +
+  scale_color_manual(values = c(
+    "gumball" = "lightblue",
+    "gumball-S&D" = "blue",
+    "election" = "red"
+  )) +
+  scale_linetype_manual(values = c(
+    "gumball" = "solid",
+    "gumball-S&D" = "solid",
+    "election" = "dashed"
+  )) +
+  labs(x = "Observed meaning probability",
+       y = "Probability of utterance",
+       color = "",
+       linetype = "") + 
+  theme(legend.position = 'top')
+
+ggsave("text_experiments.pdf", width = 7, height = 4)
+ggsave("text_experiments.png", width = 7, height = 4)
+
+```
+
+```{r model result}
+pred_discounting_s1 <- read.csv("pred_discounting_s1.csv") %>%
+  mutate(event_type = "Discounting-Uncertainty",
+         step = "uncommitted speaker")
+
+pred_counting_s1 <- read.csv("pred_counting_s1.csv") %>%
+  mutate(event_type = "Counting-Uncertainty",
+         step = "uncommitted speaker")
+
+pred_vanilla_s1 <- read.csv("pred_vanilla.csv") %>%
+  mutate(event_type = "No-Uncertainty",
+         step = "uncommitted speaker")
+
+pred_discounting_l0 <- read.csv("pred_discounting_l0.csv") %>%
+  mutate(event_type = "Discounting-Uncertainty",
+         step = "committed speaker")
+
+pred_counting_l0 <- read.csv("pred_counting_l0.csv") %>%
+  mutate(event_type = "Counting-Uncertainty",
+         step = "committed speaker")
+
+pred_vanilla_l0 <- read.csv("pred_vanilla.csv") %>%
+  mutate(event_type = "No-Uncertainty",
+         step = "committed speaker")
+
+preds <- bind_rows(pred_discounting_s1, pred_counting_s1, pred_vanilla_s1, pred_discounting_l0, pred_counting_l0, pred_vanilla_l0) %>%
+  rename(prob = usage,
+         outcome = event_prob) %>%
+  mutate(experiment_type = "model",
+         partid = paste0('model', participant))
+
+preds$utterance = ifelse(preds$utterance == "not", "bare not", preds$utterance)
+
+preds <- preds %>%
+  filter(experiment_type == "model") %>%
+  group_by(event_type, outcome, utterance, step) %>%
+  summarize(mean_prob = mean(prob),
+            se_prob = sd(prob)/sqrt(n())) %>%
+  ungroup()
+
+preds$event_type <- factor(
+  preds$event_type,
+  levels = c("No-Uncertainty",
+             "Counting-Uncertainty",
+             "Discounting-Uncertainty")
+)
+
+preds$step <- factor(
+  preds$step,
+  levels = c("committed speaker",
+             "uncommitted speaker")
+)
+
+ggplot(preds, aes(x = outcome,
+               y = mean_prob,
+               color = event_type,
+               linetype = event_type,
+               shape = event_type)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prob - 2*se_prob,
+                    ymax = mean_prob + 2*se_prob),
+                width = 1) +
+  ylim(0, 1) +
+  facet_grid(step ~ utterance, labeller = labeller(step = label_wrap_gen(width = 15))) +
+  scale_color_manual(values = c(
+    "No-Uncertainty" = "#A5D6A7",
+    "Counting-Uncertainty" = "#4CAF50",
+    "Discounting-Uncertainty" = "#2E7D32"
+  )) +
+  scale_shape_manual(values = c(
+    "No-Uncertainty" = 16,          # circle
+    "Counting-Uncertainty" = 17,  # triangle
+    "Discounting-Uncertainty" = 15 # square
+  )) +
+  guides(
+    # fill = guide_legend(nrow = 2),
+    # color = guide_legend(nrow = 2),
+    # shape = guide_legend(nrow = 2)
+  ) +
+  scale_linetype_discrete() +
+  labs(x = "Observed meaning probability",
+       y = "Probability of utterance",
+       color = "",
+       linetype = "",
+       shape = "") + 
+  theme(legend.position = 'top',
+        legend.text = element_text(size = 11))
+
+ggsave("compare_uncertainty_steps.pdf", height = 6, width = 8)
+
+# only listener step
+ggplot(preds %>% filter(step == "committed speaker"), aes(x = outcome,
+               y = mean_prob,
+               color = event_type,
+               linetype = event_type,
+               shape = event_type)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prob - 2*se_prob,
+                    ymax = mean_prob + 2*se_prob),
+                width = 1) +
+  ylim(0, 1) +
+  facet_grid(~ utterance) +
+  scale_color_manual(values = c(
+    "No-Uncertainty" = "#A5D6A7",
+    "Counting-Uncertainty" = "#4CAF50",
+    "Discounting-Uncertainty" = "#2E7D32"
+  )) +
+  scale_shape_manual(values = c(
+    "No-Uncertainty" = 16,          # circle
+    "Counting-Uncertainty" = 17,  # triangle
+    "Discounting-Uncertainty" = 15 # square
+  )) +
+  guides(
+    # fill = guide_legend(nrow = 2),
+    # color = guide_legend(nrow = 2),
+    # shape = guide_legend(nrow = 2)
+  ) +
+  scale_linetype_discrete() +
+  labs(x = "Observed meaning probability",
+       y = "Probability of utterance",
+       color = "",
+       linetype = "",
+       shape = "") + 
+  theme(legend.position = 'top',
+        legend.text = element_text(size = 11))
+
+ggsave("model_results_l0.pdf", height = 4, width = 7)
+
+# only speaker step
+ggplot(preds %>% filter(step == "uncommitted speaker"), aes(x = outcome,
+               y = mean_prob,
+               color = event_type,
+               linetype = event_type,
+               shape = event_type)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prob - 2*se_prob,
+                    ymax = mean_prob + 2*se_prob),
+                width = 1) +
+  ylim(0, 1) +
+  facet_grid(~ utterance) +
+  scale_color_manual(values = c(
+    "No-Uncertainty" = "#A5D6A7",
+    "Counting-Uncertainty" = "#4CAF50",
+    "Discounting-Uncertainty" = "#2E7D32"
+  )) +
+  scale_shape_manual(values = c(
+    "No-Uncertainty" = 16,          # circle
+    "Counting-Uncertainty" = 17,  # triangle
+    "Discounting-Uncertainty" = 15 # square
+  )) +
+  guides(
+    # fill = guide_legend(nrow = 2),
+    # color = guide_legend(nrow = 2),
+    # shape = guide_legend(nrow = 2)
+  ) +
+  scale_linetype_discrete() +
+  labs(x = "Observed meaning probability",
+       y = "Probability of utterance",
+       color = "",
+       linetype = "",
+       shape = "") + 
+  theme(legend.position = 'top',
+        legend.text = element_text(size = 11))
+
+ggsave("model_results_s1.pdf", height = 4, width = 7)
+```
+
+```{r model l0 vs human}
+preds_l0 <- preds %>%
+  mutate(experiment_type = "model",
+         partid = "0") %>%
+  rename(prob = mean_prob) %>%
+  filter(step == "listener step")
+  
+common_cols <- Reduce(intersect, list(names(preds_l0), names(df)))
+
+dat2 <- bind_rows(preds_l0[, common_cols], df[, common_cols]) %>%
+  filter(event_type != "gumball-S&D")
+
+df_both <- dat2 # save a copy here
+
+dat <- df_both %>%
+  filter(event_type != "Both-Uncertainty", experiment_type != "text") %>%
+  mutate(model_type = event_type)
+
+dat_model <- dat %>%
+  filter(experiment_type == "model") %>%
+  slice(rep(1:n(), each = 2)) %>%
+  mutate(event_type = rep(c("gumball", "election"), times = n()/2))
+
+dat <- dat %>%
+  filter(experiment_type != "model") %>%
+  bind_rows(dat_model)
+
+dat_empirical <- dat %>%
+  subset(experiment_type == "image") %>%
+  group_by(outcome, event_type, utterance) %>%
+  summarize(standard = mean(prob)) %>%
+  ungroup()
+
+dat4 <- dat %>%
+  left_join(dat_empirical, by = c("outcome", "event_type", "utterance")) %>%
+  filter(experiment_type == "model")
+
+dat5 <- dat4 %>%
+  group_by(event_type, outcome, utterance, partid, model_type) %>%
+  mutate(diff = standard - prob) %>%
+  ungroup()
+
+dat5 <- dat5 %>%
+  group_by(event_type, outcome, utterance, model_type) %>%
+  summarise(avg_diff = mean(diff),
+            se_diff = sd(diff)/sqrt(n())) %>%
+  ungroup()
+
+dat5$event_type <- factor(
+  dat5$event_type,
+  levels = c("gumball",
+             "election")
+)
+
+ggplot(dat5, aes(x = outcome,
+                 y = avg_diff,
+                 color = model_type,
+                 group = model_type,
+                 shape = model_type)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymax = avg_diff + 2*se_diff,
+                    ymin = avg_diff - 2*se_diff),
+                position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = c(
+    "No-Uncertainty" = "#A5D6A7",
+    "Counting-Uncertainty" = "#4CAF50",
+    "Discounting-Uncertainty" = "#2E7D32"
+  )) +
+  scale_shape_manual(values = c(
+    "No-Uncertainty" = 16,         
+    "Counting-Uncertainty" = 17, 
+    "Discounting-Uncertainty" = 15
+  )) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  facet_grid(event_type ~ utterance) +
+  guides(
+    # group = guide_legend(nrow = 2),
+    # color = guide_legend(nrow = 2, title.position = "top", title.hjust = 0.5),
+    # shape = guide_legend(nrow = 2, title.position = "top", title.hjust = 0.5)
+  ) +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 11)) +
+  labs(y = "Human - Model", x = "Observed meaning probability", color = "", group = "", shape = "")
+
+ggsave("model_experiments_wide_l0.pdf", height = 5, width = 6)
+```
+
+
+```{r model s1 vs human}
+preds_s1 <- preds %>%
+  mutate(experiment_type = "model",
+         partid = "0") %>%
+  rename(prob = mean_prob) %>%
+  filter(step != "listener step")
+  
+common_cols <- Reduce(intersect, list(names(preds_s1), names(df)))
+
+dat2 <- bind_rows(preds_s1[, common_cols], df[, common_cols]) %>%
+  filter(event_type != "gumball-S&D")
+
+df_both <- dat2 # save a copy here
+
+dat <- df_both %>%
+  filter(event_type != "Both-Uncertainty", experiment_type != "text") %>%
+  mutate(model_type = event_type)
+
+dat_model <- dat %>%
+  filter(experiment_type == "model") %>%
+  slice(rep(1:n(), each = 2)) %>%
+  mutate(event_type = rep(c("gumball", "election"), times = n()/2))
+
+dat <- dat %>%
+  filter(experiment_type != "model") %>%
+  bind_rows(dat_model)
+
+dat_empirical <- dat %>%
+  subset(experiment_type == "image") %>%
+  group_by(outcome, event_type, utterance) %>%
+  summarize(standard = mean(prob)) %>%
+  ungroup()
+
+dat4 <- dat %>%
+  left_join(dat_empirical, by = c("outcome", "event_type", "utterance")) %>%
+  filter(experiment_type == "model")
+
+dat5 <- dat4 %>%
+  group_by(event_type, outcome, utterance, partid, model_type) %>%
+  mutate(diff = standard - prob) %>%
+  ungroup()
+
+dat5 <- dat5 %>%
+  group_by(event_type, outcome, utterance, model_type) %>%
+  summarise(avg_diff = mean(diff),
+            se_diff = sd(diff)/sqrt(n())) %>%
+  ungroup()
+
+dat5$event_type <- factor(
+  dat5$event_type,
+  levels = c("gumball",
+             "election")
+)
+
+ggplot(dat5, aes(x = outcome,
+                 y = avg_diff,
+                 color = model_type,
+                 group = model_type,
+                 shape = model_type)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymax = avg_diff + 2*se_diff,
+                    ymin = avg_diff - 2*se_diff),
+                position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = c(
+    "No-Uncertainty" = "#A5D6A7",
+    "Counting-Uncertainty" = "#4CAF50",
+    "Discounting-Uncertainty" = "#2E7D32"
+  )) +
+  scale_shape_manual(values = c(
+    "No-Uncertainty" = 16,         
+    "Counting-Uncertainty" = 17, 
+    "Discounting-Uncertainty" = 15
+  )) +
+  geom_hline(yintercept=0, linetype='dashed') +
+  facet_grid(event_type ~ utterance) +
+  guides(
+    # group = guide_legend(nrow = 2),
+    # color = guide_legend(nrow = 2, title.position = "top", title.hjust = 0.5),
+    # shape = guide_legend(nrow = 2, title.position = "top", title.hjust = 0.5)
+  ) +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 11)) +
+  labs(y = "Human - Model", x = "Observed meaning probability", color = "", group = "", shape = "")
+
+ggsave("model_experiments_wide_s1.pdf", height = 5, width = 6)
+```
