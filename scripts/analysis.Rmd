@@ -1,6 +1,6 @@
 ---
 title: "analysis"
-output: html_document
+output: pdf_document
 date: "2025-11-10"
 ---
 
@@ -13,57 +13,118 @@ library(tidyverse)
 
 
 ```{r load data}
-df_image <- read.csv("processed_data_image.csv")
+df_image <- read.csv("../../plot/processed_data_image.csv")
 df_image$experiment_type <- "image"
 
-df_text <- read.csv("processed_data_text.csv")
+df_text <- read.csv("../../plot/processed_data_text.csv")
 df_text$experiment_type <- "text"
 
-df <- bind_rows(df_image, df_text)
+df <- bind_rows(df_image, df_text) %>%
+  mutate(outcome_grouped = case_when(
+    outcome <= 40 ~ '10-40',
+    outcome == 50 ~ '50',
+    outcome >= 60 ~ '60-90'
+  ),
+  outcome_grouped = factor(outcome_grouped,
+                           levels = c('50',
+                                      '10-40',
+                                      '60-90')),
+  event_type = factor(event_type, 
+                      levels = c('gumball',
+                                 'election')))
 
+
+contrasts(df$outcome_grouped)
+
+contrasts(df$event_type)
 ```
 
-```{r might election 10-40}
-dat1 <- subset(df, (outcome <= 40 & utterance == "might") & event_type == "gumball")
 
-dat1$experiment_type = factor(dat1$experiment_type)
+## Image analyses
 
-contrasts(dat1$experiment_type)
+### Might
 
-might_firsthalf <- glmer(prob ~ scale(outcome)*experiment_type +
-                           (1 + scale(outcome) || random_id) + 
-                           (1 + experiment_type || color), 
+```{r, cache=TRUE}
+
+might_image <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id), 
                          family = binomial,
-                         data = dat1,
+                         data = df %>% filter(utterance == 'might', experiment_type == 'image'),
                          glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
 
-summary(might_firsthalf)
+summary(might_image)
 ```
 
-```{r might 10-50}
-dat3 <- subset(df, (outcome <= 40 & utterance == "might") & event_type == "election")
 
-dat3$experiment_type = factor(dat3$experiment_type)
+### Not
 
-contrasts(dat3$experiment_type)
+```{r, cache=TRUE}
 
-might_firsthalf <- glmer(prob ~ scale(outcome)*experiment_type +
-                           (1 + scale(outcome) | random_id) + # remove experiment type, did 
-                           (1 + scale(outcome)*experiment_type | color),
+not_image <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id), 
                          family = binomial,
-                         data = dat3)
+                         data = df %>% filter(utterance == 'bare not', experiment_type == 'image'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
 
-summary(might_firsthalf)
+summary(not_image)
 ```
 
-```{r not}
-dat2 <- subset(df, (outcome <= 50 & utterance == "bare not") & event_type == "gumball")
+### Probably
 
-not_firsthalf <- glmer(prob ~ scale(outcome)*experiment_type +
-                           (1 + scale(outcome)*experiment_type | random_id) + 
-                           (1 + scale(outcome)*experiment_type | color),
+```{r, cache=TRUE}
+
+probably_image <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id), 
                          family = binomial,
-                         data = dat2)
+                         data = df %>% filter(utterance == 'probably', experiment_type == 'image'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
 
-summary(not_firsthalf)
+summary(probably_image)
 ```
+
+
+
+
+## Text analyses
+
+### Might
+
+```{r, cache=TRUE}
+
+might_text <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id), 
+                         family = binomial,
+                         data = df %>% filter(utterance == 'might', experiment_type == 'text'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(might_text)
+```
+
+
+### Not
+
+```{r, cache=TRUE}
+
+not_text <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id),
+                         family = binomial,
+                         data = df %>% filter(utterance == 'bare not', experiment_type == 'text'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(not_text)
+
+```
+
+### Probably
+
+```{r, cache=TRUE}
+
+probably_text <- glmer(prob ~ outcome_grouped*event_type +
+                           (1 + outcome_grouped*event_type | random_id), 
+                         family = binomial,
+                         data = df %>% filter(utterance == 'probably', experiment_type == 'text'),
+                         glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))) 
+
+summary(probably_text)
+```
+
